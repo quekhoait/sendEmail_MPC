@@ -1,9 +1,3 @@
-/**
- * Google API & Gmail REST API Service
- * Xử lý xác thực Google OAuth 2.0 và gửi email trực tiếp qua Gmail API
- */
-
-// Chẩn đoán và giải thích chi tiết lỗi từ Google Gmail REST API thành tiếng Việt có hướng dẫn cụ thể
 export function formatGmailApiError(status, errJson, googleClientId = '') {
   const msg = errJson?.error?.message || '';
   const reason = errJson?.error?.errors?.[0]?.reason || errJson?.error?.status || '';
@@ -29,10 +23,33 @@ export function formatGmailApiError(status, errJson, googleClientId = '') {
   return msg || `Lỗi Gmail API (Mã HTTP ${status})`;
 }
 
-// Tạo chuỗi MIME RFC 2822 chuẩn hóa Base64URL tương thích Gmail REST API (Hỗ trợ CC, BCC và Font chữ)
+function encodeHeaderWords(text) {
+  if (!/[^\x20-\x7e]/.test(text)) return text;
+  const words = [];
+  let chunk = '';
+  let bytes = 0;
+  for (const ch of text) {
+    const len = new TextEncoder().encode(ch).length;
+    if (bytes + len > 45) {
+      words.push(chunk);
+      chunk = '';
+      bytes = 0;
+    }
+    chunk += ch;
+    bytes += len;
+  }
+  if (chunk) words.push(chunk);
+  return words.map(w => `=?UTF-8?B?${btoa(unescape(encodeURIComponent(w)))}?=`).join(' ');
+}
+
 export function createBase64UrlEmail({ to, cc, bcc, subject, html, fromName, fromEmail, lineSpacing = '1.6', fontFamily = "'Times New Roman', Times, serif" }) {
-  const utf8Subject = `=?utf-8?B?${btoa(unescape(encodeURIComponent(subject)))}?=`;
-  const fromHeader = fromName ? `"${fromName}" <${fromEmail}>` : fromEmail;
+  const utf8Subject = encodeHeaderWords(String(subject || '').replace(/[\r\n]+/g, ' '));
+  const safeName = (fromName || '').replace(/[\r\n]+/g, ' ').trim();
+  const fromHeader = safeName
+    ? (/[^\x20-\x7e]/.test(safeName)
+      ? `${encodeHeaderWords(safeName)} <${fromEmail}>`
+      : `"${safeName.replace(/(["\\])/g, '\\$1')}" <${fromEmail}>`)
+    : fromEmail;
   const emailLines = [
     `From: ${fromHeader}`,
     `To: ${to}`

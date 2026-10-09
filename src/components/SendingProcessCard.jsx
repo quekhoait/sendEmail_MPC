@@ -1,544 +1,298 @@
-import React, { useState } from 'react';
-import { 
-  Play, Pause, Square, Download, Send, CheckCircle2, 
-  XCircle, Clock, RefreshCw, AlertCircle, Calendar, 
-  Timer, Sparkles, Sliders, ChevronDown, ChevronUp
-} from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import Tip from './Tip';
+import { compileTemplate } from '../utils/templateCompiler';
+import { getRecipientName } from '../utils/recipients';
 
-export default function SendingProcessCard({
-  isSending,
-  isPaused,
-  currentIndex,
-  recordsCount,
-  sendLogs,
-  onStartSending,
-  onTogglePause,
-  onStop,
-  onExportExcel,
-  hasSendScope,
-  googleUser,
-  // Scheduled Sending Props
-  scheduleEnabled,
-  setScheduleEnabled,
-  scheduledDateTime,
-  setScheduledDateTime,
-  isScheduleWaiting,
-  countdownText,
-  onActivateSchedule,
-  onCancelSchedule,
-  // Delay & Rate Limit Props
-  delaySec,
-  setDelaySec,
-  useRandomDelay,
-  setUseRandomDelay,
-  randomDelayRange,
-  setRandomDelayRange,
-  batchPauseEnabled,
-  setBatchPauseEnabled,
-  batchSize,
-  setBatchSize,
-  batchPauseSec,
-  setBatchPauseSec,
-  senderDisplayName = '',
-  setSenderDisplayName,
-  emailCol,
-  hasValidEmailColumn,
-  isEmailColValid = true
-}) {
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
+const pad = (n) => String(n).padStart(2, '0');
+const toLocalInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
-  const processedCount = sendLogs.length;
-  const successCount = sendLogs.filter(l => l.status === 'success').length;
-  const failedCount = sendLogs.filter(l => l.status === 'failed').length;
-  const percent = recordsCount > 0 ? Math.round((processedCount / recordsCount) * 100) : 0;
+function PreviewModal({ list, index, setIndex, onClose, subject, body, cc, senderName, fontFamily, headers }) {
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
-  // Tiện ích chọn nhanh thời gian hẹn
-  const setQuickSchedule = (minutesFromNow) => {
-    const d = new Date(Date.now() + minutesFromNow * 60 * 1000);
-    // Format YYYY-MM-DDTHH:mm cho datetime-local
-    const pad = (n) => String(n).padStart(2, '0');
-    const str = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    setScheduledDateTime(str);
-    setScheduleEnabled(true);
-  };
-
-  const setTomorrowMorning = () => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    d.setHours(8, 0, 0, 0);
-    const pad = (n) => String(n).padStart(2, '0');
-    const str = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    setScheduledDateTime(str);
-    setScheduleEnabled(true);
-  };
+  const rec = list[index] || {};
+  const n = list.length;
+  const ccText = compileTemplate(cc, rec);
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden transition-colors duration-200">
-      {/* Card Header */}
-      <div className="bg-slate-50/80 dark:bg-slate-800/80 px-6 py-3.5 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center space-x-2.5">
-          <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">3</span>
-          <h2 className="font-semibold text-slate-800 dark:text-slate-100 text-sm">
-            Tiến Trình Gửi Thư Hàng Loạt &amp; Hẹn Giờ Gửi
-          </h2>
+    <div className="overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 680, maxHeight: 'calc(100vh - 32px)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <b className="ellipsis" style={{ flex: 1, fontSize: 15, minWidth: 0 }}>{getRecipientName(rec, headers)}</b>
+          <button type="button" className="icon-btn icon-btn-bordered" style={{ width: 38, height: 38 }} onClick={() => setIndex((index - 1 + n) % n)}>‹</button>
+          <span className="muted" style={{ fontSize: 13, minWidth: 40, textAlign: 'center' }}>{index + 1}/{n}</span>
+          <button type="button" className="icon-btn icon-btn-bordered" style={{ width: 38, height: 38 }} onClick={() => setIndex((index + 1) % n)}>›</button>
+          <button type="button" className="icon-btn" style={{ width: 38, height: 38, fontSize: 22 }} onClick={onClose} aria-label="Đóng">×</button>
         </div>
-
-        <div className="flex items-center space-x-2">
-          <button
-            type="button"
-            onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-            className="text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center space-x-1.5 transition px-2.5 py-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"
-          >
-            <Sliders className="w-3.5 h-3.5 text-indigo-500" />
-            <span>Cài đặt thời gian</span>
-            {showAdvancedSettings ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-          </button>
-
-          {sendLogs.length > 0 && (
-            <button
-              type="button"
-              onClick={onExportExcel}
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center space-x-1.5 shadow-2xs"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Xuất Excel</span>
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="p-6 space-y-5">
-        {/* TÊN HIỂN THỊ NGƯỜI GỬI */}
-        <div className="space-y-1.5 p-3.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl">
-          <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
-            <span>Tên hiển thị người gửi (From Name):</span>
-            <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">Tùy chỉnh tên người gửi</span>
-          </label>
-          <input
-            type="text"
-            value={senderDisplayName}
-            onChange={(e) => setSenderDisplayName?.(e.target.value)}
-            placeholder={googleUser?.name || 'Phòng Đào Tạo & Quản Lý'}
-            className="w-full px-3 py-2 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+        <div style={{ overflowY: 'auto', background: '#fbfaf7', color: '#1d1f24' }}>
+          <div className="paper-head">
+            <div><span className="k">Từ</span><b>{senderName || '—'}</b></div>
+            <div><span className="k">Đến</span>{rec.__email || '—'}</div>
+            {ccText && <div><span className="k">CC</span>{ccText}</div>}
+            <div className="paper-subject">{compileTemplate(subject, rec)}</div>
+          </div>
+          <div
+            className="email-preview-content"
+            style={{ padding: 20, fontSize: 15, lineHeight: 1.6, fontFamily }}
+            dangerouslySetInnerHTML={{ __html: compileTemplate(body, rec, true) }}
           />
-        </div>
-
-        {/* KHUNG CÀI ĐẶT THỜI GIAN & CHỐNG SPAM */}
-        {showAdvancedSettings && (
-          <div className="p-4 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl space-y-4 animate-fade-in text-xs">
-            <div className="font-bold text-slate-800 dark:text-slate-100 flex items-center space-x-1.5">
-              <Clock className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-              <span>Cấu hình tốc độ &amp; Khoảng cách giãn cách giữa các Email</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Giãn cách gửi */}
-              <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2">
-                <span className="font-semibold text-slate-700 dark:text-slate-200 block">Thời gian giãn cách:</span>
-                <div className="space-y-2">
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="delayType"
-                      checked={!useRandomDelay}
-                      onChange={() => setUseRandomDelay(false)}
-                      className="text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span className="text-slate-700 dark:text-slate-300">Cố định:</span>
-                    <input
-                      type="number"
-                      min="0.5"
-                      max="10"
-                      step="0.5"
-                      disabled={useRandomDelay}
-                      value={delaySec}
-                      onChange={(e) => setDelaySec(parseFloat(e.target.value) || 1.5)}
-                      className="w-16 px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded text-center font-bold text-xs"
-                    />
-                    <span className="text-slate-500 dark:text-slate-400">giây / email</span>
-                  </label>
-
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="delayType"
-                      checked={useRandomDelay}
-                      onChange={() => setUseRandomDelay(true)}
-                      className="text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span className="text-slate-700 dark:text-slate-300">Ngẫu nhiên: từ</span>
-                    <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      step="0.5"
-                      disabled={!useRandomDelay}
-                      value={randomDelayRange.min}
-                      onChange={(e) => setRandomDelayRange(prev => ({ ...prev, min: parseFloat(e.target.value) || 1.5 }))}
-                      className="w-14 px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded text-center font-bold text-xs"
-                    />
-                    <span className="text-slate-600 dark:text-slate-300">đến</span>
-                    <input
-                      type="number"
-                      min="1"
-                      max="20"
-                      step="0.5"
-                      disabled={!useRandomDelay}
-                      value={randomDelayRange.max}
-                      onChange={(e) => setRandomDelayRange(prev => ({ ...prev, max: parseFloat(e.target.value) || 3.5 }))}
-                      className="w-14 px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded text-center font-bold text-xs"
-                    />
-                    <span className="text-slate-500 dark:text-slate-400">giây (Chống spam Gmail)</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Tạm nghỉ theo đợt */}
-              <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2">
-                <label className="flex items-center space-x-2 cursor-pointer font-semibold text-slate-700 dark:text-slate-200">
-                  <input
-                    type="checkbox"
-                    checked={batchPauseEnabled}
-                    onChange={(e) => setBatchPauseEnabled(e.target.checked)}
-                    className="rounded text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span>Tạm nghỉ theo đợt (Khuyên dùng khi gửi trên 50 email):</span>
-                </label>
-
-                {batchPauseEnabled && (
-                  <div className="pl-6 space-y-1 text-slate-600 dark:text-slate-300">
-                    <div className="flex items-center space-x-1.5">
-                      <span>Sau mỗi</span>
-                      <input
-                        type="number"
-                        min="5"
-                        max="200"
-                        step="5"
-                        value={batchSize}
-                        onChange={(e) => setBatchSize(parseInt(e.target.value) || 20)}
-                        className="w-14 px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded text-center font-bold text-xs"
-                      />
-                      <span>email, tạm dừng</span>
-                      <input
-                        type="number"
-                        min="10"
-                        max="600"
-                        step="10"
-                        value={batchPauseSec}
-                        onChange={(e) => setBatchPauseSec(parseInt(e.target.value) || 30)}
-                        className="w-14 px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded text-center font-bold text-xs"
-                      />
-                      <span>giây</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* KHUNG HẸN GIỜ GỬI TỰ ĐỘNG (SCHEDULED SENDING) */}
-        {!isSending && (
-          <div className="p-4 bg-gradient-to-r from-indigo-50/80 via-purple-50/40 to-slate-50 dark:from-slate-800/90 dark:via-indigo-950/40 dark:to-slate-800/90 border border-indigo-100 dark:border-slate-700 rounded-2xl space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="flex items-center space-x-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={scheduleEnabled}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setScheduleEnabled(checked);
-                    if (!checked && isScheduleWaiting) {
-                      onCancelSchedule();
-                    }
-                  }}
-                  className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
-                />
-                <span className="font-bold text-xs text-indigo-950 dark:text-indigo-200 flex items-center space-x-1.5">
-                  <Calendar className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-                  <span>Hẹn giờ gửi tự động (Đặt lịch phát thư vào thời gian cụ thể)</span>
-                </span>
-              </label>
-
-              {scheduleEnabled && !isScheduleWaiting && (
-                <div className="flex flex-wrap gap-1 text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => setQuickSchedule(15)}
-                    className="px-2 py-0.5 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 border border-indigo-200 dark:border-slate-700 rounded text-indigo-700 dark:text-indigo-300 font-medium transition"
-                  >
-                    +15 phút nữa
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setQuickSchedule(30)}
-                    className="px-2 py-0.5 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 border border-indigo-200 dark:border-slate-700 rounded text-indigo-700 dark:text-indigo-300 font-medium transition"
-                  >
-                    +30 phút nữa
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setQuickSchedule(60)}
-                    className="px-2 py-0.5 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 border border-indigo-200 dark:border-slate-700 rounded text-indigo-700 dark:text-indigo-300 font-medium transition"
-                  >
-                    +1 giờ nữa
-                  </button>
-                  <button
-                    type="button"
-                    onClick={setTomorrowMorning}
-                    className="px-2 py-0.5 bg-white dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 border border-indigo-200 dark:border-slate-700 rounded text-indigo-700 dark:text-indigo-300 font-medium transition"
-                  >
-                    08:00 sáng mai
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Khi bật hẹn giờ */}
-            {scheduleEnabled && (
-              <div className="pt-2 border-t border-indigo-100/70 dark:border-slate-700">
-                {!isScheduleWaiting ? (
-                  <div className="flex flex-wrap items-center gap-3 text-xs">
-                    <span className="text-slate-600 dark:text-slate-300">Chọn thời điểm gửi:</span>
-                    <input
-                      type="datetime-local"
-                      value={scheduledDateTime}
-                      onChange={(e) => setScheduledDateTime(e.target.value)}
-                      className="px-3 py-1.5 bg-white dark:bg-slate-800 border border-indigo-300 dark:border-indigo-700 rounded-xl font-mono text-xs text-indigo-950 dark:text-indigo-100 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={onActivateSchedule}
-                      disabled={!scheduledDateTime || recordsCount === 0 || isScheduleWaiting || !isEmailColValid}
-                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-bold rounded-xl transition flex items-center space-x-1.5 shadow-2xs"
-                    >
-                      <Timer className="w-3.5 h-3.5" />
-                      <span>Kích Hoạt Lịch Hẹn Gửi</span>
-                    </button>
-                  </div>
-                ) : (
-                  /* ĐANG CHỜ ĐẾN GIỜ HẸN (ĐẾM NGƯỢC) */
-                  <div className="p-4 bg-indigo-600 text-white rounded-xl flex flex-wrap items-center justify-between gap-4 shadow-md animate-pulse">
-                    <div className="flex items-center space-x-3">
-                      <div className="p-2.5 bg-white/20 rounded-xl">
-                        <Clock className="w-6 h-6 text-white animate-spin" />
-                      </div>
-                      <div>
-                        <div className="font-bold text-sm">
-                          ĐÃ LÊN LỊCH: Tự động gửi lúc {new Date(scheduledDateTime).toLocaleString('vi-VN')}
-                        </div>
-                        <div className="text-xs text-indigo-100 mt-0.5">
-                          Ứng dụng đang đếm ngược và sẽ tự động gửi khi hết giờ. Hãy giữ tab trình duyệt này mở!
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center space-x-3">
-                      <div className="bg-black/25 px-4 py-2 rounded-xl text-center font-mono">
-                        <div className="text-[10px] text-indigo-200 uppercase tracking-widest font-sans">Đếm ngược</div>
-                        <div className="text-xl font-bold tracking-wider">{countdownText || '--:--:--'}</div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={onStartSending}
-                        disabled={!isEmailColValid}
-                        className="px-3 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-400 text-white font-bold rounded-xl text-xs transition"
-                      >
-                        Gửi ngay
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={onCancelSchedule}
-                        className="px-3 py-2 bg-white/20 hover:bg-white/30 text-white font-bold rounded-xl text-xs transition"
-                      >
-                        Hủy lịch hẹn
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* HIỂN THỊ LỖI NẾU CỘT CHỌN LÀM EMAIL KHÔNG PHẢI ĐỊNH DẠNG EMAIL */}
-        {recordsCount > 0 && emailCol && !isEmailColValid && (
-          <div className="p-3.5 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800/80 rounded-2xl text-xs text-rose-700 dark:text-rose-300 flex items-center space-x-2.5">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 dark:text-rose-400" />
-            <div>
-              <strong>Lỗi không thể gửi:  Không tìm thấy cột email hợp lệ</strong>
-            </div>
-          </div>
-        )}
-
-        {/* THANH ĐIỀU KHIỂN NÚT GỬI TRỰC TIẾP */}
-        <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl">
-          <div className="flex flex-wrap items-center gap-2.5">
-            {!isSending ? (
-              <button
-                type="button"
-                onClick={onStartSending}
-                disabled={recordsCount === 0 || isScheduleWaiting || (emailCol && !isEmailColValid)}
-                className={`px-6 py-3 font-bold rounded-xl text-xs transition flex items-center space-x-2 ${
-                  recordsCount === 0 || isScheduleWaiting || (emailCol && !isEmailColValid)
-                    ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed'
-                    : !googleUser
-                      ? 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-md hover:shadow-lg'
-                      : 'bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white shadow-md shadow-indigo-200 dark:shadow-none hover:shadow-lg'
-                }`}
-              >
-                {emailCol && !isEmailColValid ? (
-                  <>
-                    <XCircle className="w-4 h-4 text-rose-300" />
-                    <span>Cột "{emailCol}" Không Phải Email</span>
-                  </>
-                ) : !googleUser ? (
-                  <>
-                    <Send className="w-4 h-4 fill-white" />
-                    <span>Đăng Nhập Google &amp; Bắt Đầu Gửi ({recordsCount} Email)</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 fill-white" />
-                    <span>Bắt Đầu Gửi Hàng Loạt ({recordsCount} Email)</span>
-                  </>
-                )}
-              </button>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  onClick={onTogglePause}
-                  className={`px-4 py-2.5 text-white font-bold rounded-xl text-xs transition flex items-center space-x-1.5 ${isPaused ? 'bg-amber-600 hover:bg-amber-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}
-                >
-                  {isPaused ? <Play className="w-3.5 h-3.5 fill-white" /> : <Pause className="w-3.5 h-3.5 fill-white" />}
-                  <span>{isPaused ? 'Tiếp tục gửi' : 'Tạm dừng'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={onStop}
-                  className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition flex items-center space-x-1.5"
-                >
-                  <Square className="w-3.5 h-3.5 fill-white" />
-                  <span>Dừng hẳn</span>
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* THỐNG KÊ NHANH */}
-          <div className="flex items-center space-x-4 text-xs font-mono">
-            <div className="text-slate-600 dark:text-slate-400">
-              Tổng số: <strong className="text-slate-900 dark:text-white">{recordsCount}</strong>
-            </div>
-            <div className="text-emerald-700 dark:text-emerald-400">
-              Thành công: <strong className="text-emerald-600 dark:text-emerald-300">{successCount}</strong>
-            </div>
-            <div className="text-rose-700 dark:text-rose-400">
-              Thất bại: <strong className="text-rose-600 dark:text-rose-300">{failedCount}</strong>
-            </div>
-          </div>
-        </div>
-
-        {/* THANH TIẾN ĐỘ TIẾN TRÌNH */}
-        {recordsCount > 0 && (
-          <div className="space-y-1.5">
-            <div className="flex justify-between text-xs text-slate-600 dark:text-slate-400">
-              <span>Tiến độ gửi thư:</span>
-              <span className="font-mono font-bold text-indigo-700 dark:text-indigo-400">{percent}% ({processedCount}/{recordsCount})</span>
-            </div>
-            <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2.5 overflow-hidden">
-              <div 
-                className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300 ease-out"
-                style={{ width: `${percent}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* BẢNG NHẬT KÝ CHI TIẾT GỬI MAIL */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-              Nhật ký gửi thư chi tiết:
-            </span>
-            {sendLogs.length > 0 && (
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                (Đã xử lý {sendLogs.length} dòng)
-              </span>
-            )}
-          </div>
-
-          <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden shadow-2xs">
-            <div className="max-h-72 overflow-y-auto">
-              <table className="w-full text-xs text-left border-collapse">
-                <thead className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold sticky top-0 border-b border-slate-200 dark:border-slate-700 z-10">
-                  <tr>
-                    <th className="px-3 py-2 text-slate-400 font-mono w-10 text-center">#</th>
-                    <th className="px-3 py-2 whitespace-nowrap">Người nhận</th>
-                    <th className="px-3 py-2 whitespace-nowrap">Email</th>
-                    <th className="px-3 py-2 whitespace-nowrap">CC / BCC</th>
-                    <th className="px-3 py-2 whitespace-nowrap">MSSV</th>
-                    <th className="px-3 py-2 whitespace-nowrap">Thời gian</th>
-                    <th className="px-3 py-2 whitespace-nowrap text-center">Trạng thái</th>
-                    <th className="px-3 py-2 whitespace-nowrap">Chi tiết kết quả / Lỗi</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {sendLogs.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
-                        Chưa có nhật ký gửi thư nào. Hãy bấm "Bắt đầu gửi hàng loạt" ở trên.
-                      </td>
-                    </tr>
-                  ) : (
-                    [...sendLogs].reverse().map((log) => (
-                      <tr key={log.id} className="hover:bg-slate-50/80 transition">
-                        <td className="px-3 py-2 text-center text-slate-400 font-mono text-[11px]">{log.id}</td>
-                        <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">{log.name}</td>
-                        <td className="px-3 py-2 font-mono text-slate-700 whitespace-nowrap">{log.email}</td>
-                        <td className="px-3 py-2 font-mono text-[11px] text-slate-500 whitespace-nowrap">
-                          {log.cc ? <span className="mr-1 text-indigo-700 font-semibold">CC: {log.cc}</span> : null}
-                          {log.bcc ? <span className="text-purple-700 font-semibold">BCC: {log.bcc}</span> : null}
-                          {!log.cc && !log.bcc ? '--' : null}
-                        </td>
-                        <td className="px-3 py-2 font-mono text-slate-600 whitespace-nowrap">{log.mssv}</td>
-                        <td className="px-3 py-2 text-slate-500 font-mono text-[11px] whitespace-nowrap">{log.time}</td>
-                        <td className="px-3 py-2 text-center whitespace-nowrap">
-                          {log.status === 'success' && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                              <CheckCircle2 className="w-3 h-3 mr-1 text-emerald-600" />
-                              Thành công
-                            </span>
-                          )}
-                          {log.status === 'failed' && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">
-                              <XCircle className="w-3 h-3 mr-1 text-rose-600" />
-                              Thất bại
-                            </span>
-                          )}
-                          {log.status === 'sending' && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800">
-                              <RefreshCw className="w-3 h-3 mr-1 animate-spin text-indigo-600" />
-                              Đang gửi...
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-[11px] text-slate-600 max-w-xs truncate" title={log.error}>
-                          {log.error || (log.status === 'success' ? 'Đã gửi thành công' : '--')}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function NumberField({ value, onChange, min, max, step, disabled, width = 70 }) {
+  return (
+    <input
+      type="number"
+      className="field field-sm"
+      style={{ width, minHeight: 36 }}
+      min={min}
+      max={max}
+      step={step}
+      value={value}
+      disabled={disabled}
+      onChange={onChange}
+    />
+  );
+}
+
+export default function SendingProcessCard({
+  isSending, isPaused, sendLogs,
+  validIndexes, records, headers, previewRecords,
+  subject, body, cc, fontFamily,
+  senderDisplayName, setSenderDisplayName,
+  scheduleEnabled, setScheduleEnabled,
+  scheduledDateTime, setScheduledDateTime,
+  isScheduleWaiting, countdownText, onCancelSchedule, onSendNowFromSchedule,
+  delaySec, setDelaySec,
+  useRandomDelay, setUseRandomDelay,
+  randomDelayRange, setRandomDelayRange,
+  batchPauseEnabled, setBatchPauseEnabled,
+  batchSize, setBatchSize,
+  batchPauseSec, setBatchPauseSec,
+  onExportExcel,
+}) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [viewIdx, setViewIdx] = useState(null);
+
+  const logById = new Map(sendLogs.map((l) => [l.id, l]));
+  const total = validIndexes.length;
+  const doneCount = sendLogs.filter((l) => l.status === 'success').length;
+  const failCount = sendLogs.filter((l) => l.status === 'failed').length;
+  const processed = doneCount + failCount;
+  const pct = total ? Math.min(100, (processed / total) * 100) : 0;
+  const finished = !isSending && sendLogs.length > 0;
+  const locked = isSending || isScheduleWaiting;
+
+  const setQuick = (minutes) => {
+    setScheduledDateTime(toLocalInput(new Date(Date.now() + minutes * 60000)));
+  };
+  const setTomorrow8 = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(8, 0, 0, 0);
+    setScheduledDateTime(toLocalInput(d));
+  };
+
+  const listTitle = isSending
+    ? (isPaused ? 'Đang tạm dừng' : 'Đang gửi…')
+    : isScheduleWaiting ? 'Đã lên lịch gửi' : finished ? 'Kết quả gửi' : 'Danh sách gửi';
+
+  const statusOf = (rowIdx) => {
+    const log = logById.get(rowIdx + 1);
+    if (log?.status === 'success') return { text: 'Đã gửi', cls: 'pill-ok' };
+    if (log?.status === 'failed') return { text: 'Lỗi', cls: 'pill-err' };
+    if (log?.status === 'sending') return { text: 'Đang gửi', cls: 'pill-acc' };
+    if (isScheduleWaiting) return { text: 'Đã lên lịch', cls: 'pill-acc' };
+    return { text: 'Chờ gửi', cls: '' };
+  };
+
+  return (
+    <>
+      <h2 className="h2">Kiểm tra và gửi</h2>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,320px),1fr))', gap: 16, alignItems: 'start' }}>
+        <section className="card" style={{ padding: '6px 16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '12px 0', borderBottom: '1px solid #1a2132', fontSize: 14 }}>
+            <span className="muted" style={{ flex: 'none' }}>Tiêu đề</span>
+            <span style={{ textAlign: 'right', minWidth: 0, wordBreak: 'break-word' }}>{subject || '—'}</span>
+          </div>
+          <label style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '8px 12px', padding: '10px 0', fontSize: 14 }}>
+            <span className="muted">Tên người gửi</span>
+            <input
+              className="field"
+              style={{ flex: '1 1 180px', maxWidth: 280, minHeight: 42, textAlign: 'right' }}
+              value={senderDisplayName}
+              disabled={isSending}
+              onChange={(e) => setSenderDisplayName(e.target.value)}
+            />
+          </label>
+        </section>
+
+        <section className="card" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 8 }}>
+            {[['Gửi ngay', false], ['Hẹn giờ', true]].map(([label, val]) => {
+              const on = scheduleEnabled === val;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  disabled={locked}
+                  onClick={() => setScheduleEnabled(val)}
+                  style={{
+                    minHeight: 48, padding: '8px 12px', borderRadius: 12, cursor: locked ? 'not-allowed' : 'pointer',
+                    font: "600 14px 'Be Vietnam Pro', sans-serif", color: 'var(--text)',
+                    background: on ? 'rgba(245,130,42,.08)' : 'var(--surface-2)',
+                    border: `1.5px solid ${on ? 'var(--acc)' : 'var(--line-2)'}`,
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {scheduleEnabled && !isScheduleWaiting && (
+            <>
+              <input type="datetime-local" className="field" value={scheduledDateTime} onChange={(e) => setScheduledDateTime(e.target.value)} />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {[['+15 phút', () => setQuick(15)], ['+30 phút', () => setQuick(30)], ['+1 giờ', () => setQuick(60)], ['08:00 sáng mai', setTomorrow8]].map(([l, fn]) => (
+                  <button key={l} type="button" className="btn btn-sm" onClick={fn}>{l}</button>
+                ))}
+              </div>
+              <span className="faint" style={{ fontSize: 12 }}>Hãy giữ tab trình duyệt mở — thư sẽ tự gửi khi đến giờ hẹn.</span>
+            </>
+          )}
+
+          {isScheduleWaiting && (
+            <div style={{ background: 'var(--acc-soft)', borderRadius: 12, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 13, color: '#ffb37a' }}>
+                Sẽ tự động gửi lúc {new Date(scheduledDateTime).toLocaleString('vi-VN')}
+              </div>
+              <div className="countdown">{countdownText || '--:--:--'}</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="btn btn-sm" onClick={onSendNowFromSchedule}>Gửi ngay</button>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={onCancelSchedule}>Huỷ lịch</button>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+
+      <section className="card" style={{ padding: '12px 16px' }}>
+        <button
+          type="button"
+          onClick={() => setShowAdvanced((v) => !v)}
+          style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, background: 'none', border: 0, color: 'var(--text)', cursor: 'pointer', font: "600 14px 'Be Vietnam Pro', sans-serif", padding: 0, minHeight: 32 }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            Tốc độ gửi
+            <Tip side="left">Giãn cách giữa các email giúp tránh bị Gmail đánh dấu spam. Nên bật tạm nghỉ theo đợt khi gửi trên 50 email.</Tip>
+          </span>
+          <span className="faint" style={{ fontSize: 13, fontWeight: 400 }}>
+            {useRandomDelay ? `ngẫu nhiên ${randomDelayRange.min}–${randomDelayRange.max}s` : `${delaySec}s / email`}{batchPauseEnabled ? ` · nghỉ ${batchPauseSec}s mỗi ${batchSize} thư` : ''} {showAdvanced ? '▴' : '▾'}
+          </span>
+        </button>
+
+        {showAdvanced && (
+          <div className="animate-fade-in" style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,300px),1fr))', gap: 16 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 14 }}>
+              <span className="label">Giãn cách giữa các thư</span>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <input type="radio" name="delayType" checked={!useRandomDelay} disabled={isSending} onChange={() => setUseRandomDelay(false)} />
+                Cố định
+                <NumberField min="0.5" max="10" step="0.5" value={delaySec} disabled={useRandomDelay || isSending} onChange={(e) => setDelaySec(parseFloat(e.target.value) || 1.5)} />
+                giây
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <input type="radio" name="delayType" checked={useRandomDelay} disabled={isSending} onChange={() => setUseRandomDelay(true)} />
+                Ngẫu nhiên
+                <NumberField min="1" max="10" step="0.5" width={64} value={randomDelayRange.min} disabled={!useRandomDelay || isSending} onChange={(e) => setRandomDelayRange((p) => ({ ...p, min: parseFloat(e.target.value) || 1.5 }))} />
+                –
+                <NumberField min="1" max="20" step="0.5" width={64} value={randomDelayRange.max} disabled={!useRandomDelay || isSending} onChange={(e) => setRandomDelayRange((p) => ({ ...p, max: parseFloat(e.target.value) || 3.5 }))} />
+                giây
+              </label>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 14 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={batchPauseEnabled} disabled={isSending} onChange={(e) => setBatchPauseEnabled(e.target.checked)} />
+                <span className="label" style={{ color: 'var(--text)' }}>Tạm nghỉ theo đợt</span>
+              </label>
+              {batchPauseEnabled && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  Sau mỗi
+                  <NumberField min="5" max="200" step="5" width={64} value={batchSize} disabled={isSending} onChange={(e) => setBatchSize(parseInt(e.target.value) || 20)} />
+                  thư, nghỉ
+                  <NumberField min="10" max="600" step="10" width={64} value={batchPauseSec} disabled={isSending} onChange={(e) => setBatchPauseSec(parseInt(e.target.value) || 30)} />
+                  giây
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section className="card" style={{ overflow: 'hidden' }}>
+        <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10, borderBottom: '1px solid var(--line)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+            <b style={{ fontSize: 15 }}>{listTitle}</b>
+            <div style={{ display: 'flex', gap: 14, fontSize: 13, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span className="muted">{doneCount}/{total} đã gửi</span>
+              {failCount > 0 && <span style={{ color: 'var(--err)' }}>{failCount} lỗi</span>}
+              {sendLogs.length > 0 && <button type="button" className="btn btn-sm" onClick={onExportExcel}>Xuất Excel</button>}
+            </div>
+          </div>
+          <div className="progress"><div style={{ width: `${pct}%` }} /></div>
+        </div>
+
+        <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+          {validIndexes.map((rowIdx, pos) => {
+            const row = records[rowIdx];
+            const st = statusOf(rowIdx);
+            const log = logById.get(rowIdx + 1);
+            return (
+              <div className="rcpt" key={rowIdx}>
+                <span className="faint" style={{ flex: 'none', width: 22 }}>{pos + 1}</span>
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                  <span className="ellipsis" style={{ fontWeight: 500 }}>{getRecipientName(row, headers)}</span>
+                  <span className="faint ellipsis">{previewRecords[pos]?.__email}</span>
+                  {log?.status === 'failed' && log.error && (
+                    <span className="ellipsis" style={{ color: 'var(--err)', fontSize: 12 }} title={log.error}>{log.error}</span>
+                  )}
+                </div>
+                <span className={`pill ${st.cls}`} style={{ flex: 'none' }}>{st.text}</span>
+                <button type="button" className="icon-btn" title="Xem trước thư" onClick={() => setViewIdx(pos)}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      {viewIdx !== null && previewRecords.length > 0 && (
+        <PreviewModal
+          list={previewRecords}
+          index={Math.min(viewIdx, previewRecords.length - 1)}
+          setIndex={setViewIdx}
+          onClose={() => setViewIdx(null)}
+          subject={subject}
+          body={body}
+          cc={cc}
+          senderName={senderDisplayName}
+          fontFamily={fontFamily}
+          headers={headers}
+        />
+      )}
+    </>
   );
 }

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { Lock, AlertCircle, Play } from 'lucide-react';
 
 // Constants & Utilities
 import { EMAIL_TEMPLATES, DEFAULT_SAMPLE_DATA } from './constants/templates';
 import { compileTemplate, cleanTemplateText } from './utils/templateCompiler';
 import { parseClipboardData, parseExcelData } from './utils/excelParser';
+import { isValidEmail, getValidIndexes } from './utils/recipients';
+import { loadSavedTemplates, persistSavedTemplates } from './utils/templateStore';
 
 // Services (Google OAuth, Gmail REST API & Google Sheets)
 import { 
@@ -18,6 +19,9 @@ import {
 
 // Components
 import Header from './components/Header';
+import LoginScreen from './components/LoginScreen';
+import Stepper from './components/Stepper';
+import TemplateModal from './components/TemplateModal';
 import DataInputCard from './components/DataInputCard';
 import TemplateEditorCard from './components/TemplateEditorCard';
 import SendingProcessCard from './components/SendingProcessCard';
@@ -41,27 +45,6 @@ const initialDraft = getInitialDraft();
 const ENV_GOOGLE_CLIENT_ID = import.meta.env?.VITE_GOOGLE_CLIENT_ID;
 
 export default function App() {
-  // --- THEME (DARK / LIGHT MODE) ---
-  const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem('app_theme');
-    if (saved) return saved === 'dark';
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches || false;
-  });
-
-  useEffect(() => {
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('app_theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('app_theme', 'light');
-    }
-  }, [isDark]);
-
-  const handleToggleTheme = () => {
-    setIsDark(prev => !prev);
-  };
-
   // --- STATE 1: GOOGLE API & AUTH ---
   const [googleClientId, setGoogleClientId] = useState(() => {
     return localStorage.getItem('custom_google_client_id') || ENV_GOOGLE_CLIENT_ID || '';
@@ -85,7 +68,11 @@ export default function App() {
   const [driveLoading, setDriveLoading] = useState(false);
 
   // --- STATE 3: MẪU THƯ, CC, BCC & FONT ---
-  const [selectedTemplateId, setSelectedTemplateId] = useState(() => initialDraft?.selectedTemplateId || 'student_info');
+  const [templateName, setTemplateName] = useState(() => initialDraft?.templateName || EMAIL_TEMPLATES[0].name);
+  const [savedTemplates, setSavedTemplates] = useState(loadSavedTemplates);
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [step, setStep] = useState(1); // 1: Danh sách | 2: Nội dung | 3: Kiểm tra & gửi
+  const [editorTab, setEditorTab] = useState('edit'); // 'edit' | 'preview'
   const [subject, setSubject] = useState(() => initialDraft?.subject !== undefined ? initialDraft.subject : EMAIL_TEMPLATES[0].subject);
   const [body, setBody] = useState(() => {
     if (initialDraft?.body !== undefined) {
@@ -122,13 +109,9 @@ export default function App() {
   const [lastSavedTime, setLastSavedTime] = useState('');
   const [toast, setToast] = useState(null);
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  const isEmailColValid = Boolean(
-    emailCol &&
-    records.length > 0 &&
-    records.some(r => emailRegex.test(String(r[emailCol] || '').trim()))
-  );
-  const hasValidEmailColumn = isEmailColValid;
+  const validIndexes = getValidIndexes(records, emailCol);
+  const isEmailColValid = validIndexes.length > 0;
+  const previewRecords = validIndexes.map(i => ({ ...records[i], __email: String(records[i][emailCol] || '').trim() }));
 
 
   const isPausedRef = useRef(false);
@@ -147,7 +130,7 @@ export default function App() {
       try {
         const stateToSave = {
           rawPastedText, records, headers, dataSourceName, showPreview, inputMode,
-          emailCol, subject, body, cc, bcc, showCc, showBcc, fontFamily, selectedTemplateId,
+          emailCol, subject, body, cc, bcc, showCc, showBcc, fontFamily, templateName,
           delaySec, useRandomDelay, randomDelayRange, batchPauseEnabled, batchSize, batchPauseSec,
           scheduleEnabled, scheduledDateTime, senderDisplayName
         };
@@ -161,7 +144,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [
     rawPastedText, records, headers, dataSourceName, showPreview, inputMode,
-    emailCol, subject, body, cc, bcc, showCc, showBcc, fontFamily, selectedTemplateId,
+    emailCol, subject, body, cc, bcc, showCc, showBcc, fontFamily, templateName,
     delaySec, useRandomDelay, randomDelayRange, batchPauseEnabled, batchSize, batchPauseSec,
     scheduleEnabled, scheduledDateTime, senderDisplayName
   ]);
@@ -185,7 +168,10 @@ export default function App() {
       setShowCc(false);
       setShowBcc(false);
       setFontFamily("'Times New Roman', Times, serif");
-      setSelectedTemplateId('student_info');
+      setTemplateName(EMAIL_TEMPLATES[0].name);
+      setStep(1);
+      setSendLogs([]);
+      setCurrentIndex(0);
       setLastSavedTime('');
       showToastMsg('Đã xóa toàn bộ bản lưu tạm!', 'info');
     }
@@ -363,11 +349,9 @@ export default function App() {
     setSendLogs([]);
     setCurrentIndex(0);
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
     // 1. Tìm cột nào chứa ít nhất 1 email hợp lệ trong dữ liệu
     let detectedEmailCol = parsedHeaders.find(col => {
-      return parsedData.some(row => emailRegex.test(String(row[col] || '').trim()));
+      return parsedData.some(row => isValidEmail(row[col]));
     });
 
     // 2. Nếu chưa thấy bằng regex dữ liệu, thử tìm theo tên cột email
@@ -473,29 +457,6 @@ export default function App() {
     }
   };
 
-  const handleInsertVariable = (varName) => {
-    const tag = `{${varName}}`;
-    if (lastFocusedInputRef.current === 'subject') {
-      const el = subjectRef.current;
-      if (el) {
-        const start = el.selectionStart || 0;
-        const end = el.selectionEnd || 0;
-        const nextVal = subject.slice(0, start) + tag + subject.slice(end);
-        setSubject(nextVal);
-        setTimeout(() => {
-          el.focus();
-          el.selectionStart = el.selectionEnd = start + tag.length;
-        }, 0);
-      } else {
-        setSubject(prev => prev + tag);
-      }
-    } else {
-      document.execCommand('insertText', false, tag);
-      setBody(prev => prev + tag);
-    }
-    showToastMsg(`Đã chèn biến ${tag}`, 'info');
-  };
-
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   const handleStartSending = async () => {
@@ -524,7 +485,7 @@ export default function App() {
     }
 
     if (!isEmailColValid) {
-      showToastMsg(`❌ Lỗi: Cột "${emailCol}" không phải định dạng email hợp lệ! Vui lòng chọn lại cột email ở Bước 1.`, 'error');
+      showToastMsg(`Cột "${emailCol}" không có email hợp lệ. Hãy chọn lại cột email ở bước 1.`, 'error');
       return;
     }
 
@@ -548,6 +509,9 @@ export default function App() {
     let fatalAuthError = false;
 
     for (let i = startIdx; i < records.length; i++) {
+      // Bỏ qua dòng có email sai định dạng
+      if (!isValidEmail(records[i][emailCol])) continue;
+
       while (isPausedRef.current && !stopRequestedRef.current) {
         await sleep(300);
       }
@@ -586,8 +550,7 @@ export default function App() {
         return copy;
       });
 
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!toEmail || !emailRegex.test(toEmail)) {
+      if (!toEmail || !isValidEmail(toEmail)) {
         logItem.status = 'failed';
         logItem.error = 'Email bị trống hoặc không đúng định dạng';
         failCount++;
@@ -642,7 +605,7 @@ export default function App() {
         return copy;
       });
 
-      if (i < records.length - 1 && !stopRequestedRef.current) {
+      if (i < records.length - 1 && !stopRequestedRef.current && validIndexes.some(v => v > i)) {
         if (batchPauseEnabled && (i + 1) % batchSize === 0) {
           showToastMsg(`Đã gửi đợt ${i + 1} email. Tạm nghỉ ${batchPauseSec}s trước khi gửi tiếp...`, 'info');
           await sleep(batchPauseSec * 1000);
@@ -708,67 +671,121 @@ export default function App() {
     showToastMsg('✓ Đã xuất file báo cáo Excel thành công!', 'success');
   };
 
+  // --- MẪU THƯ: DÙNG / LƯU / XOÁ ---
+  const handleUseTemplate = (tpl) => {
+    setSubject(tpl.subject);
+    setBody(tpl.body);
+    setTemplateName(tpl.name);
+    setTemplateModalOpen(false);
+    showToastMsg(`Đã áp dụng mẫu “${tpl.name}”`, 'success');
+  };
+
+  const handleSaveTemplate = (name) => {
+    const existing = savedTemplates.find(t => t.name === name);
+    const tpl = { id: existing ? existing.id : `u${Date.now()}`, name, subject, body };
+    const next = existing ? savedTemplates.map(t => (t.id === existing.id ? tpl : t)) : [tpl, ...savedTemplates];
+    setSavedTemplates(next);
+    persistSavedTemplates(next);
+    setTemplateName(name);
+    showToastMsg(existing ? 'Đã cập nhật mẫu' : `Đã lưu mẫu “${name}”`, 'success');
+  };
+
+  const handleDeleteTemplate = (id) => {
+    const next = savedTemplates.filter(t => t.id !== id);
+    setSavedTemplates(next);
+    persistSavedTemplates(next);
+    showToastMsg('Đã xoá mẫu', 'info');
+  };
+
+  // --- ĐIỀU HƯỚNG CÁC BƯỚC ---
+  const locked = isSending;
+  const goStep = (n) => {
+    if (locked) return;
+    if (n > 1 && validIndexes.length === 0) {
+      showToastMsg('Hãy nhập danh sách người nhận có email hợp lệ trước.', 'warning');
+      return;
+    }
+    setStep(n);
+    setEditorTab('edit');
+  };
+
+  const handleNewBatch = () => {
+    setSendLogs([]);
+    setCurrentIndex(0);
+    setRecords([]);
+    setHeaders([]);
+    setEmailCol('');
+    setRawPastedText('');
+    setDataSourceName('');
+    setShowPreview(false);
+    setIsScheduleWaiting(false);
+    setStep(1);
+  };
+
+  const total = validIndexes.length;
+  const processed = sendLogs.filter(l => l.status === 'success' || l.status === 'failed').length;
+  const finished = !isSending && sendLogs.length > 0;
+  const canResume = finished && processed < total && !isScheduleWaiting;
+
+  // Cấu hình thanh hành động phía dưới
+  const footer = { primaryLabel: 'Tiếp tục', primary: () => goStep(step + 1), disabled: false, hint: '', secondary: null };
+  if (step === 1) {
+    footer.disabled = total === 0;
+    footer.hint = total ? `${total} người sẽ nhận thư` : 'Nhập danh sách để tiếp tục';
+  } else if (step === 2) {
+    footer.hint = 'Tự động lưu bản nháp';
+  } else if (isSending) {
+    footer.primaryLabel = 'Đang gửi…';
+    footer.disabled = true;
+    footer.hint = `Đã gửi ${processed}/${total}`;
+    footer.secondary = [
+      { label: isPaused ? 'Tiếp tục' : 'Tạm dừng', onClick: handleTogglePause },
+      { label: 'Dừng', onClick: handleStop },
+    ];
+  } else if (isScheduleWaiting) {
+    footer.primaryLabel = 'Đã lên lịch';
+    footer.disabled = true;
+    footer.hint = `Gửi lúc ${new Date(scheduledDateTime).toLocaleString('vi-VN')}`;
+    footer.secondary = [{ label: 'Huỷ lịch', onClick: handleCancelSchedule }];
+  } else if (finished) {
+    footer.primaryLabel = 'Gửi đợt mới';
+    footer.primary = handleNewBatch;
+    footer.hint = `Hoàn tất ${processed}/${total}`;
+    if (canResume) footer.secondary = [{ label: 'Gửi tiếp', onClick: handleStartSending }];
+  } else if (scheduleEnabled) {
+    footer.primaryLabel = 'Đặt lịch gửi';
+    footer.primary = handleActivateSchedule;
+    footer.disabled = !scheduledDateTime;
+    footer.hint = scheduledDateTime ? '' : 'Chọn thời điểm gửi';
+  } else {
+    footer.primaryLabel = `Gửi ${total} email`;
+    footer.primary = handleStartSending;
+    footer.disabled = total === 0 || !subject.trim() || !body.trim();
+    footer.hint = !subject.trim() ? 'Chưa có tiêu đề' : '';
+  }
+
   return (
-    <div className={`min-h-screen ${isDark ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'} flex flex-col font-sans transition-colors duration-200`}>
-      <Header 
+    <div className="app-shell">
+      <Header
         googleUser={googleUser}
         hasSendScope={hasSendScope}
         onLogin={handleGoogleLogin}
         onLogout={handleGoogleLogout}
         lastSavedTime={lastSavedTime}
         onClearDraft={handleClearDraft}
-        isDark={isDark}
-        onToggleTheme={handleToggleTheme}
       />
 
-      <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {!googleUser ? (
-          <div className="max-w-2xl mx-auto py-12 px-4 text-center space-y-8 flex flex-col items-center justify-center">
-             {/* Ảnh to lên và căn giữa hoàn toàn */}
-             <div className="flex flex-col items-center justify-center space-y-4">
-               <img
-                 src="https://res.cloudinary.com/ds11ggie4/image/upload/v1791383134/Emo1_nmkeka.png"
-                 alt="Logo"
-                 className="w-40 h-40 object-contain shrink-0 animate-pulse"
-               />
-               <h1 className="font-extrabold text-xl sm:text-2xl text-slate-900 dark:text-white tracking-wide">
-                 GỬI EMAIL TỰ ĐỘNG
-               </h1>
-             </div>
+      {!googleUser ? (
+        <LoginScreen onLogin={handleGoogleLogin} />
+      ) : (
+        <>
+          <nav className="app-container" style={{ paddingTop: 20, paddingBottom: 8 }}>
+            <Stepper step={step} onGo={goStep} locked={locked} />
+          </nav>
 
-            <div className="space-y-2">
-              <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
-                Đăng Nhập Tài Khoản Google Để Bắt Đầu
-              </h2>
-              
-            </div>
-
-            {/* Nút Đăng Nhập Rực Lửa (Hiệu ứng lửa cháy Gradient Cam - Đỏ - Vàng rực rỡ) */}
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2 w-full">
-              <button
-                type="button"
-                onClick={handleGoogleLogin}
-                className="relative px-8 py-4 bg-gradient-to-r from-red-600 via-orange-500 to-amber-500 hover:from-red-500 hover:via-orange-400 hover:to-amber-400 text-white rounded-2xl text-sm sm:text-base font-extrabold shadow-lg shadow-orange-500/40 hover:shadow-orange-500/70 hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 flex items-center justify-center space-x-3 group border border-amber-300/40 overflow-hidden"
-              >
-                {/* Hiệu ứng tia sáng quét qua (Glow flare) */}
-                <span className="absolute inset-0 w-full h-full bg-white/20 transform -skew-x-12 -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></span>
-                
-                <svg className="w-6 h-6 shrink-0 relative z-10 filter drop-shadow" viewBox="0 0 24 24">
-                  <path fill="#ffffff" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                  <path fill="#ffffff" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                  <path fill="#ffffff" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-                  <path fill="#ffffff" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-                </svg>
-                <span className="relative z-10 tracking-wide drop-shadow-sm">🔥 ĐĂNG NHẬP GOOGLE NGAY 🔥</span>
-              </button>
-            </div>
-
-          
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-10 gap-6 items-start">
-            <div className="lg:col-span-7 space-y-6">
-              <DataInputCard 
+          <main className="app-container app-main">
+            {step === 1 && (
+              <DataInputCard
                 inputMode={inputMode}
                 setInputMode={setInputMode}
                 rawPastedText={rawPastedText}
@@ -778,17 +795,17 @@ export default function App() {
                 emailCol={emailCol}
                 setEmailCol={setEmailCol}
                 dataSourceName={dataSourceName}
-                showPreview={showPreview}
                 onApplyPastedData={handleApplyPastedData}
                 onFileUpload={handleFileUpload}
                 onLoadSampleData={handleLoadSampleData}
                 onResetData={handleResetData}
                 onImportGoogleSheetUrl={handleImportGoogleSheetUrl}
                 driveLoading={driveLoading}
-                hasValidEmailColumn={hasValidEmailColumn}
               />
+            )}
 
-              <TemplateEditorCard 
+            {step === 2 && (
+              <TemplateEditorCard
                 subject={subject}
                 setSubject={setSubject}
                 body={body}
@@ -804,28 +821,32 @@ export default function App() {
                 fontFamily={fontFamily}
                 setFontFamily={setFontFamily}
                 headers={headers}
-                records={records}
-                selectedTemplateId={selectedTemplateId}
-                setSelectedTemplateId={setSelectedTemplateId}
-                onInsertVariable={handleInsertVariable}
+                headersForName={headers}
+                previewRecords={previewRecords}
+                senderDisplayName={senderDisplayName}
+                templateName={templateName}
+                onOpenTemplates={() => setTemplateModalOpen(true)}
+                onSaveTemplate={handleSaveTemplate}
                 lastFocusedInputRef={lastFocusedInputRef}
                 subjectRef={subjectRef}
+                editorTab={editorTab}
+                setEditorTab={setEditorTab}
               />
-            </div>
+            )}
 
-            <div className="lg:col-span-3 space-y-6 lg:sticky lg:top-20">
-              <SendingProcessCard 
+            {step === 3 && (
+              <SendingProcessCard
                 isSending={isSending}
                 isPaused={isPaused}
-                currentIndex={currentIndex}
-                recordsCount={records.length}
                 sendLogs={sendLogs}
-                onStartSending={handleStartSending}
-                onTogglePause={handleTogglePause}
-                onStop={handleStop}
-                onExportExcel={handleExportExcel}
-                hasSendScope={hasSendScope}
-                googleUser={googleUser}
+                validIndexes={validIndexes}
+                records={records}
+                headers={headers}
+                previewRecords={previewRecords}
+                subject={subject}
+                body={body}
+                cc={cc}
+                fontFamily={fontFamily}
                 senderDisplayName={senderDisplayName}
                 setSenderDisplayName={setSenderDisplayName}
                 scheduleEnabled={scheduleEnabled}
@@ -834,8 +855,8 @@ export default function App() {
                 setScheduledDateTime={setScheduledDateTime}
                 isScheduleWaiting={isScheduleWaiting}
                 countdownText={countdownText}
-                onActivateSchedule={handleActivateSchedule}
                 onCancelSchedule={handleCancelSchedule}
+                onSendNowFromSchedule={handleStartSending}
                 delaySec={delaySec}
                 setDelaySec={setDelaySec}
                 useRandomDelay={useRandomDelay}
@@ -848,20 +869,40 @@ export default function App() {
                 setBatchSize={setBatchSize}
                 batchPauseSec={batchPauseSec}
                 setBatchPauseSec={setBatchPauseSec}
-                emailCol={emailCol}
-                hasValidEmailColumn={hasValidEmailColumn}
-                isEmailColValid={isEmailColValid}
+                onExportExcel={handleExportExcel}
               />
+            )}
+          </main>
+
+          <footer className="footerbar">
+            <div className="app-container footerbar-inner">
+              {step > 1 && !locked && (
+                <button type="button" className="btn btn-ghost btn-lg" onClick={() => goStep(step - 1)}>Quay lại</button>
+              )}
+              <span className="faint ellipsis" style={{ flex: 1, fontSize: 13, minWidth: 0 }}>{footer.hint}</span>
+              {footer.secondary?.map(b => (
+                <button key={b.label} type="button" className="btn btn-ghost btn-lg" onClick={b.onClick}>{b.label}</button>
+              ))}
+              <button type="button" className="btn btn-primary btn-lg" style={{ padding: '0 22px' }} disabled={footer.disabled} onClick={footer.primary}>
+                {footer.primaryLabel}
+              </button>
             </div>
-          </div>
-        )}
-      </main>
+          </footer>
 
+          {templateModalOpen && (
+            <TemplateModal
+              builtin={EMAIL_TEMPLATES}
+              saved={savedTemplates}
+              currentName={templateName}
+              onUse={handleUseTemplate}
+              onDelete={handleDeleteTemplate}
+              onClose={() => setTemplateModalOpen(false)}
+            />
+          )}
+        </>
+      )}
 
-      <Toast 
-        toast={toast}
-        onClose={() => setToast(null)}
-      />
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }
